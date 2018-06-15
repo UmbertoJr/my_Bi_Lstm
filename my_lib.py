@@ -21,12 +21,12 @@ def return_vec(row):
         return word, vec
     
 def save_obj(obj, name ):
-    with open('../data/sensembed_vectors/obj/'+ name + '.pkl', 'wb') as f:
+    with open('drive/NLP_project/data/sensembed_vectors/obj/'+ name + '.pkl', 'wb') as f:
         pickle.dump(obj, f, pickle.HIGHEST_PROTOCOL)
 
         
 def load_obj(name ):
-    with open('../data/sensembed_vectors/obj/' + name + '.pkl', 'rb') as f:
+    with open('drive/NLP_project/data/sensembed_vectors/obj/' + name + '.pkl', 'rb') as f:
         return pickle.load(f)
     
 
@@ -48,20 +48,20 @@ def take_vectors(d, word, file_name):
 def build_vec(par,senso , row):
     parola = '_'.join([par, senso])
     if parola in row:
-        p, vec = take_vectors(row,parola,'../data/sensembed_vectors/babelfy_vectors.txt')
+        p, vec = take_vectors(row,parola,'drive/NLP_project/data/sensembed_vectors/babelfy_vectors.txt')
     elif par in row:
-        p, vec = take_vectors(row,par,'../data/sensembed_vectors/babelfy_vectors.txt')
+        p, vec = take_vectors(row,par,'drive/NLP_project/data/sensembed_vectors/babelfy_vectors.txt')
     else:
         if bool(re.findall("_",par)):
             ws = par.split("_")
             vec = np.zeros((400), dtype=float)
             for w in ws:
                 if w in row:
-                    p, vec_new = take_vectors(row,w,'../data/sensembed_vectors/babelfy_vectors.txt')
+                    p, vec_new = take_vectors(row,w,'drive/NLP_project/data/sensembed_vectors/babelfy_vectors.txt')
                     vec = (vec + np.array(vec_new, dtype=float))/2
             return vec.tolist()
         else:
-            p, vec = take_vectors(row,"unk",'../data/sensembed_vectors/babelfy_vectors.txt')
+            p, vec = take_vectors(row,"unk",'drive/NLP_project/data/sensembed_vectors/babelfy_vectors.txt')
     return vec
 
 ## function that take a word and compute the mean for all sense of that word
@@ -76,19 +76,19 @@ def mean_senses(word, row):
 
 ### create a dictionary for each sense.xml file crea le features
 def create_dic_for_sense_emb(f, row, modality):
-    r = ET.parse("../data/"+modality+"/"+f).getroot()
+    r = ET.parse("drive/NLP_project/data/"+modality+"/"+f).getroot()
     dic = {}
     for sent in r:
         for word in sent:
             dic[word.tag]= mean_senses(word, row)
-    with open("../data/"+modality+"/embeddings/"+ re.sub(".xml","",f) + ".pkl", "wb") as file:
+    with open("drive/NLP_project/data/"+modality+"/embeddings/"+ re.sub(".xml","",f) + ".pkl", "wb") as file:
         pickle.dump(dic, file, pickle.HIGHEST_PROTOCOL)
         print("done", f)
 
         
 ## funzione che crea output per il Deep NN
 def build_y(name_file,y_dic,row, modality, domini_visti = {}):
-    path = "../data/"+modality+"/"
+    path = "drive/NLP_project/data/"+modality+"/"
     file = ET.parse(path + name_file)
     r = file.getroot()
     dizionario_per_vettori = {}
@@ -105,7 +105,7 @@ def build_y(name_file,y_dic,row, modality, domini_visti = {}):
                         if dom[0] not in domini_visti:
                             domini_visti[dom[0]] = "_"
     dic = [dizionario_per_vettori, dizionario_per_i_domini]
-    with open("../data/"+modality+"/Y_data/"+ re.sub("file","y_data",re.sub(".xml","",name_file)) + ".pkl", "wb") as file:
+    with open("drive/NLP_project/data/"+modality+"/Y_data/"+ re.sub("file","y_data",re.sub(".xml","",name_file)) + ".pkl", "wb") as file:
         pickle.dump(dic, file, pickle.HIGHEST_PROTOCOL)
         print("done", name_file)        
     return domini_visti     
@@ -115,7 +115,7 @@ def build_y(name_file,y_dic,row, modality, domini_visti = {}):
 
 class create_batch:
     def __init__(self, cosa, row_emb):
-        self.path = "../data/"
+        self.path = "drive/NLP_project/data/"
         self.batch = 0
         self.batch_current = 0
         self.done = 0
@@ -123,7 +123,7 @@ class create_batch:
         self.mode = cosa
         self.counter = 0
         self.current_file_readed=""
-        self.domain = {j: i+1 for i,j in enumerate(sorted(list(pickle.load(open("../data/pickle_data.pkl","rb")).keys())))}
+        self.domain = {j: i+1 for i,j in enumerate(sorted(list(pickle.load(open("drive/NLP_project/data/pickle_data.pkl","rb")).keys())))}
         if cosa == "TRAIN":
             self.root = ET.parse(open(self.path + "semcor.data.xml", "r")).getroot()
             self.position_sentence = "d000.s000"
@@ -219,9 +219,9 @@ class create_batch:
             if word.attrib["id"] in self.current_dic_input:
                 return self.current_dic_input[word.attrib["id"]]
         elif word.attrib["lemma"] in self.row_emb:
-            return take_vectors(self.row_emb,word.attrib["lemma"],'../data/sensembed_vectors/babelfy_vectors.txt')[1]
+            return take_vectors(self.row_emb,word.attrib["lemma"],'drive/NLP_project/data/sensembed_vectors/babelfy_vectors.txt')[1]
         else:
-            return take_vectors(self.row_emb,"unk",'../data/sensembed_vectors/babelfy_vectors.txt')[1]
+            return take_vectors(self.row_emb,"unk",'drive/NLP_project/data/sensembed_vectors/babelfy_vectors.txt')[1]
 
     def output_data(self, word):
         if word.tag == "instance":
@@ -230,9 +230,9 @@ class create_batch:
             else:
                 return [self.current_dic_output[0][word.attrib["id"]],self.domain[self.current_dic_output[1][word.attrib["id"]][0]],0, word.attrib["id"]]
         elif word.attrib["lemma"] in self.row_emb:
-            return [take_vectors(self.row_emb,word.attrib["lemma"],'../data/sensembed_vectors/babelfy_vectors.txt')[1], 0, 0, word.attrib["lemma"]]
+            return [take_vectors(self.row_emb,word.attrib["lemma"],'drive/NLP_project/data/sensembed_vectors/babelfy_vectors.txt')[1], 0, 0, word.attrib["lemma"]]
         else:
-            return [take_vectors(self.row_emb,"unk",'../data/sensembed_vectors/babelfy_vectors.txt')[1], 0, 0, word.attrib["lemma"]]
+            return [take_vectors(self.row_emb,"unk",'drive/NLP_project/data/sensembed_vectors/babelfy_vectors.txt')[1], 0, 0, word.attrib["lemma"]]
 
     def longer_sentence_extractor(self, sent):
         vec_x = []
