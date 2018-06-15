@@ -48,20 +48,20 @@ def take_vectors(d, word, file_name):
 def build_vec(par,senso , row):
     parola = '_'.join([par, senso])
     if parola in row:
-        p, vec = take_vectors(row,parola,'../data/sensembed_vectors/babelfy_vectors')
+        p, vec = take_vectors(row,parola,'../data/sensembed_vectors/babelfy_vectors.txt')
     elif par in row:
-        p, vec = take_vectors(row,par,'../data/sensembed_vectors/babelfy_vectors')
+        p, vec = take_vectors(row,par,'../data/sensembed_vectors/babelfy_vectors.txt')
     else:
         if bool(re.findall("_",par)):
             ws = par.split("_")
             vec = np.zeros((400), dtype=float)
             for w in ws:
                 if w in row:
-                    p, vec_new = take_vectors(row,w,'../data/sensembed_vectors/babelfy_vectors')
+                    p, vec_new = take_vectors(row,w,'../data/sensembed_vectors/babelfy_vectors.txt')
                     vec = (vec + np.array(vec_new, dtype=float))/2
             return vec.tolist()
         else:
-            p, vec = take_vectors(row,"unk",'../data/sensembed_vectors/babelfy_vectors')
+            p, vec = take_vectors(row,"unk",'../data/sensembed_vectors/babelfy_vectors.txt')
     return vec
 
 ## function that take a word and compute the mean for all sense of that word
@@ -176,6 +176,7 @@ class create_batch:
         #X = []
         #Y = []
         visto = False
+        #non è super efficciente ma funziona
         for doc in self.root:
                 for sent in doc:
                     if visto:
@@ -184,7 +185,8 @@ class create_batch:
                     if counter>= self.batch_current: #len(X)
                         return None
                         #return((x,y) for x in X for y in Y)
-
+                    
+                    
                     if sent.attrib["id"] == self.position_sentence and not visto and counter < self.batch_current:
                         self.counter += 1
                         if len(sent.getchildren())< 50:
@@ -217,9 +219,9 @@ class create_batch:
             if word.attrib["id"] in self.current_dic_input:
                 return self.current_dic_input[word.attrib["id"]]
         elif word.attrib["lemma"] in self.row_emb:
-            return take_vectors(self.row_emb,word.attrib["lemma"],'../data/sensembed_vectors/babelfy_vectors')[1]
+            return take_vectors(self.row_emb,word.attrib["lemma"],'../data/sensembed_vectors/babelfy_vectors.txt')[1]
         else:
-            return take_vectors(self.row_emb,"unk",'../data/sensembed_vectors/babelfy_vectors')[1]
+            return take_vectors(self.row_emb,"unk",'../data/sensembed_vectors/babelfy_vectors.txt')[1]
 
     def output_data(self, word):
         if word.tag == "instance":
@@ -228,9 +230,9 @@ class create_batch:
             else:
                 return [self.current_dic_output[0][word.attrib["id"]],self.domain[self.current_dic_output[1][word.attrib["id"]][0]],0, word.attrib["id"]]
         elif word.attrib["lemma"] in self.row_emb:
-            return [take_vectors(self.row_emb,word.attrib["lemma"],'../data/sensembed_vectors/babelfy_vectors')[1], 0, 0, word.attrib["lemma"]]
+            return [take_vectors(self.row_emb,word.attrib["lemma"],'../data/sensembed_vectors/babelfy_vectors.txt')[1], 0, 0, word.attrib["lemma"]]
         else:
-            return [take_vectors(self.row_emb,"unk",'../data/sensembed_vectors/babelfy_vectors')[1], 0, 0, word.attrib["lemma"]]
+            return [take_vectors(self.row_emb,"unk",'../data/sensembed_vectors/babelfy_vectors.txt')[1], 0, 0, word.attrib["lemma"]]
 
     def longer_sentence_extractor(self, sent):
         vec_x = []
