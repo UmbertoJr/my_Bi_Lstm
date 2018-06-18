@@ -1,76 +1,195 @@
 import tensorflow as tf
 import numpy as np
-import time as t
 
-class modello:
-    def __init__(self, hidden_Bi_Lstm_dim, graph):
+class My_Model:
+  
+  def __init__(self, hidden_Bi_Lstm, attention_hidden,  graph):
+    self.embeddings_dim = 400  # dim sense-embeddings
+    self.output_class = 36
+    self.output_senses = 25915
+    self.hidden_Bi_Lstm = hidden_Bi_Lstm
+    self.attention_hidden = attention_hidden
+
+    self.graph = graph
+    
+    with self.graph.as_default():
+      with tf.name_scope("outputs") as scope:
+        self.vectors_outputs = tf.placeholder(tf.float32,
+                                        shape=[None, self.embeddings_dim],
+                                        name='outputs_vec')
+        self.classes = tf.placeholder(tf.float16,
+                                        shape=[None, self.output_class],
+                                        name='classes')
+        self.real_senses = tf.placeholder(tf.float16,
+                                        shape=[None, self.output_senses],
+                                        name='senses')
+
+
+
+      
+      with tf.name_scope("input") as scope:
+          # Placeholder for input vector with shape[batch, seq, embeddings]
+          self._inputs = tf.placeholder(tf.float32,
+                                        shape=[None, self.embeddings_dim],
+                                        name='inputs')
+
+      self.Bi_Lstm = My_Bi_Lstm(inputs= self._inputs,
+                                hidden_Bi_Lstm_dim= self.hidden_Bi_Lstm,
+                                graph=self.graph)  # Build the instance graph
+      self.out = self.Bi_Lstm.get_concat_hidden() # Build a tensor output of the BI-LSTM of dim [T, 2*Hidden]
+
+      self.attent = My_Attention_layer(self.out, attention_size = self.attention_hidden, graph=self.graph)
+      self.last_layer = self.attent.build() # This is the last hidden layer and is the concatenation of Bi and attention mecchanism
+                                            # dim [T, 4*Hidden]
+      
+      self.weig = {}
+      with tf.name_scope("w_for_loss") as scope:
+        self.weig["W_vec"] = tf.Variable(tf.random_normal([4 * self.hidden_Bi_Lstm, self.embeddings_dim], stddev=0.1))
+        self.weig["b_vec"] = tf.Variable(tf.random_normal([self.embeddings_dim], stddev=0.1))
+        self.weig["W_classes"] = tf.Variable(tf.random_normal([4 * self.hidden_Bi_Lstm, self.output_class], stddev=0.1))
+        self.weig["b_classes"] = tf.Variable(tf.random_normal([self.output_class], stddev=0.1))
+        self.weig["W_senses"] = tf.Variable(tf.random_normal([4 * self.hidden_Bi_Lstm, self.output_senses], stddev=0.001))
+        self.weig["b_senses"] = tf.Variable(tf.random_normal([self.output_senses], stddev=0.001))
+      
+  def get_loss_embeddings(self):
+    vec_pred = tf.tensordot(self.last_layer,self.weig["W_vec"], axes=1) + self.weig["b_vec"]
+    loss = tf.losses.mean_squared_error(labels=self.vectors_outputs, predictions=vec_pred)
+    return loss
+  
+  def get_loss_classes(self):
+    vec_pred = tf.nn.softmax(tf.tensordot(self.last_layer,self.weig["W_classes"], axes=1) + self.weig["b_classes"])
+    loss = tf.losses.softmax_cross_entropy(onehot_labels=self.classes, logits=vec_pred)
+    return loss
+  
+  def get_loss_senses(self):
+    vec_pred = tf.tensordot(self.last_layer,self.weig["W_senses"], axes=1) + self.weig["b_senses"]
+    loss = tf.losses.mean_squared_error(labels=self.real_senses, predictions=vec_pred)
+    return loss
+  
+  def total_lost(self):
+    return self.get_loss_embeddings() + self.get_loss_classes() + 10* self.get_loss_senses()
+   
+   
+   
+class My_Attention_layer:
+  
+  def __init__(self,inputs,attention_size,  graph, session = False, return_alphas=False):
+    self.inputs = inputs
+    self.graph = graph
+    self.return_alphas = return_alphas
+    self.session = session
+    with self.graph.as_default():
+      
+      self.hidden_size = inputs.shape[1].value  # D value - hidden size of the RNN layer
+
+      # Trainable parameters
+      self.w_omega = tf.Variable(tf.random_normal([self.hidden_size, attention_size], stddev=0.1))
+      self.b_omega = tf.Variable(tf.random_normal([attention_size], stddev=0.1))
+      self.u_omega = tf.Variable(tf.random_normal([attention_size], stddev=0.1))
+
+    
+  def build(self):
+    
+    with self.graph.as_default():
+      
+      with tf.name_scope('Attention_mechanism_v'):
+          # Applying fully connected layer with non-linear activation to each of the B*T timestamps;
+          #  the shape of `v` is (T,D)*(D,A)=(T,A), where A=attention_size
+          v = tf.tanh(tf.tensordot(self.inputs, self.w_omega, axes=1) + self.b_omega)
+
+      # For each of the timestamps its vector of size A from `v` is reduced with `u` vector
+      vu = tf.tensordot(v, self.u_omega, axes=1, name='vu')  # (T) shape
+      self.alphas = tf.nn.softmax(vu, name='alphas')         # (T) shape
+      if self.session:
+        print("alpha dim : ",self.session.run(tf.shape(self.alphas)))
+
+      # Output of (Bi-)RNN is reduced with attention vector; the result has (B,D) shape
+      self.output_atten = tf.tensordot(self.alphas, self.inputs, axes=1)
+      
+      self.final_outputs = self.get_outputs()
+      if not self.return_alphas:
+        return self.final_outputs
+      else:
+        return self.output_atten, self.alphas
+
+
+
+    # Function to get output from a hidden layer
+  def concatenate(self, inputs_1_word):
+      final_output = tf.concat([inputs_1_word, self.output_atten], axis = 0)
+      return final_output
+
+  # Function for getting all output layers
+  def get_outputs(self):
+      all_outputs = tf.map_fn(self.concatenate, self.inputs)
+      return all_outputs
+        
+
+      
+
+
+class My_Bi_Lstm:
+    def __init__(self,inputs, hidden_Bi_Lstm_dim, graph):
         # Initialization of given values
-        self.input_size = 400
+        self.input_size = inputs.shape[1].value # dimention embeddings
         self.hidden_layer_size = hidden_Bi_Lstm_dim
-        self.target_size = 400
         self.weights = {}
         self.direction = ""
         self.graph = graph
         with self.graph.as_default():
-            # Weights for last output layers
-            with tf.name_scope("output_layer") as scope:
-                self.Wo = tf.Variable(tf.truncated_normal([self.hidden_layer_size * 2, self.target_size],
-                                                          mean=0, stddev=.01))
-                self.bo = tf.Variable(tf.truncated_normal([self.target_size], mean=0, stddev=.01))
-                
+          
+          with tf.name_scope("input") as scope:
+            # Placeholder for input vector with shape[batch, seq, embeddings]
+            self._inputs = inputs
+
+            # Reversing the inputs by sequence for backward pass of the LSTM
+            self._inputs_rev = tf.reverse(self._inputs, axis= [0], name="reverse")
+
 
             for direction in ["forward", "backward"]:
                 with tf.name_scope("Lstm_new_candidate_gate_layer_"+direction) as scope:
                     # selection weights for update gate layer
-                    self.weights[direction + "_Wi"] = tf.Variable(tf.zeros([self.input_size,
-                                                                            self.hidden_layer_size]), name="W")
-                    self.weights[direction + "_Ui"] = tf.Variable(tf.zeros([self.hidden_layer_size,
-                                                                            self.hidden_layer_size]), name="U")
-                    self.weights[direction + "_bi"] = tf.Variable(tf.zeros([self.hidden_layer_size]), name="b")
+                    self.weights[direction + "_Wi"] = tf.Variable(tf.truncated_normal([self.input_size,self.hidden_layer_size],
+                                                                                      stddev=(1/np.sqrt(self.hidden_layer_size))), name="W")
+                    self.weights[direction + "_Ui"] = tf.Variable(tf.truncated_normal([self.hidden_layer_size,self.hidden_layer_size], 
+                                                                                      stddev=(1/np.sqrt(self.hidden_layer_size))), name="U")
+                    self.weights[direction + "_bi"] = tf.Variable(tf.truncated_normal([self.hidden_layer_size],
+                                                                                      stddev=(1/np.sqrt(self.hidden_layer_size))), name="b")
 
 
                     # new candidates for Memory gate
-                    self.weights[direction + "_Wc"] = tf.Variable(tf.zeros([self.input_size,
-                                                                            self.hidden_layer_size]), name="W_c")
-                    self.weights[direction + "_Uc"] = tf.Variable(tf.zeros([self.hidden_layer_size,
-                                                                            self.hidden_layer_size]), name="U_c")
-                    self.weights[direction + "_bc"] = tf.Variable(tf.zeros([self.hidden_layer_size]), name="b_c")
+                    self.weights[direction + "_Wc"] = tf.Variable(tf.truncated_normal([self.input_size,self.hidden_layer_size],
+                                                                                      stddev=(1/np.sqrt(self.hidden_layer_size))), name="W_c")
+                    self.weights[direction + "_Uc"] = tf.Variable(tf.truncated_normal([self.hidden_layer_size,self.hidden_layer_size], 
+                                                                                      stddev=(1/np.sqrt(self.hidden_layer_size))), name="U_c")
+                    self.weights[direction + "_bc"] = tf.Variable(tf.truncated_normal([self.hidden_layer_size], 
+                                                                                      stddev=(1/np.sqrt(self.hidden_layer_size))), name="b_c")
 
 
                 with tf.name_scope("Lstm_forget_gate_layer_"+direction) as scope:
                     # Forget gate weights
-                    self.weights[direction + "_Wf"] = tf.Variable(tf.zeros([self.input_size,
-                                                                            self.hidden_layer_size]), name="W_forget")
-                    self.weights[direction + "_Uf"] = tf.Variable(tf.zeros([self.hidden_layer_size,
-                                                                            self.hidden_layer_size]), name="U_forget")
-                    self.weights[direction + "_bf"] = tf.Variable(tf.zeros([self.hidden_layer_size]), name="b_forget")
+                    self.weights[direction + "_Wf"] = tf.Variable(tf.truncated_normal([self.input_size,self.hidden_layer_size], 
+                                                                                      stddev=(1/np.sqrt(self.hidden_layer_size))), name="W_forget")
+                    self.weights[direction + "_Uf"] = tf.Variable(tf.truncated_normal([self.hidden_layer_size,self.hidden_layer_size], 
+                                                                                      stddev=(1/np.sqrt(self.hidden_layer_size))), name="U_forget")
+                    self.weights[direction + "_bf"] = tf.Variable(tf.truncated_normal([self.hidden_layer_size], 
+                                                                                      stddev=(1/np.sqrt(self.hidden_layer_size))), name="b_forget")
 
                 with tf.name_scope("Lstm_output_layer_"+direction) as scope:
                     # Output gate weights
-                    self.weights[direction + "_Wog"] = tf.Variable(tf.zeros([self.input_size,
-                                                                             self.hidden_layer_size]),name="W_output")
-                    self.weights[direction + "_Uog"] = tf.Variable(tf.zeros([self.hidden_layer_size,
-                                                                             self.hidden_layer_size]),name="u_ouput")
-                    self.weights[direction + "_bog"] = tf.Variable(tf.zeros([self.hidden_layer_size]), name="b_output")
+                    self.weights[direction + "_Wog"] = tf.Variable(tf.truncated_normal([self.input_size,self.hidden_layer_size], 
+                                                                                       stddev=(1/np.sqrt(self.hidden_layer_size))),name="W_output")
+                    self.weights[direction + "_Uog"] = tf.Variable(tf.truncated_normal([self.hidden_layer_size,self.hidden_layer_size], 
+                                                                                       stddev=(1/np.sqrt(self.hidden_layer_size))),name="u_ouput")
+                    self.weights[direction + "_bog"] = tf.Variable(tf.truncated_normal([self.hidden_layer_size], 
+                                                                                       stddev=(1/np.sqrt(self.hidden_layer_size))), name="b_output")
             
             
-            with tf.name_scope("input") as scope:
-                # Placeholder for input vector with shape[batch, seq, embeddings]
-                self._inputs = tf.placeholder(tf.float32,
-                                              shape=[None, self.input_size],
-                                              name='inputs')
-
-                # Reversing the inputs by sequence for backward pass of the LSTM
-                self._inputs_rev = tf.reverse(self._inputs, axis= [0], name="reverse")
-                
-                # Target variable
-                self._targets = tf.placeholder(tf.float32,
-                                              shape= [None, self.input_size],
-                                              name = "targets")
+         
                           
             with tf.name_scope("initial_state") as scope:
                 self.initial_hidden = self._inputs[0, :]
-                self.initial_hidden = tf.matmul(tf.reshape(self.initial_hidden,[1,400]), tf.zeros([self.input_size,
+                self.initial_hidden = tf.matmul(tf.reshape(self.initial_hidden,[1,self.input_size]), tf.zeros([self.input_size,
                                                                                                    self.hidden_layer_size]))
 
                 self.initial_hidden = tf.stack([self.initial_hidden, self.initial_hidden])
@@ -93,7 +212,7 @@ class modello:
                 # Forget gate Layer
                 with tf.name_scope("forget_layer_" + direction) as scope:
                     f = tf.sigmoid(
-                        tf.matmul(tf.reshape(input_x,[1,400]), self.weights[direction + "_Wf"], name="1") +
+                        tf.matmul(tf.reshape(input_x,[1,self.input_size]), self.weights[direction + "_Wf"], name="1") +
                         tf.matmul(previous_hidden_state, self.weights[direction + "_Uf"], name= "2") +\
                         self.weights[direction + "_bf"], name="forget_values"
                     )
@@ -102,14 +221,14 @@ class modello:
                 with tf.name_scope("new_candidate_values") as scope:
                     # Input Gate Layer
                     i = tf.sigmoid(
-                        tf.matmul(tf.reshape(input_x,[1,400]), self.weights[direction + "_Wi"]) +
+                        tf.matmul(tf.reshape(input_x,[1,self.input_size]), self.weights[direction + "_Wi"]) +
                         tf.matmul(previous_hidden_state, self.weights[direction + "_Ui"], name="2") +\
                         self.weights[direction + "_bi"], name="update_values"
                     )
                         
                     # New Memory Cell
                     c_ = tf.nn.tanh(
-                        tf.matmul(tf.reshape(input_x,[1,400]), self.weights[direction + "_Wc"]) +
+                        tf.matmul(tf.reshape(input_x,[1,self.input_size]), self.weights[direction + "_Wc"]) +
                         tf.matmul(previous_hidden_state, self.weights[direction + "_Uc"]) +\
                         self.weights[direction + "_bc"], name="new_values"
                     )
@@ -121,7 +240,7 @@ class modello:
                 with tf.name_scope("output_layer") as scope:
                     # Output Gate
                     o = tf.sigmoid(
-                        tf.matmul(tf.reshape(input_x,[1,400]), self.weights[direction + "_Wog"]) +
+                        tf.matmul(tf.reshape(input_x,[1,self.input_size]), self.weights[direction + "_Wog"]) +
                         tf.matmul(previous_hidden_state, self.weights[direction + "_Uog"]) +\
                         self.weights[direction + "_bog"], name ="output_before_filter"
                     )
@@ -177,37 +296,19 @@ class modello:
         all_hidden_states_f, all_memory_states_f, all_hidden_states_b, all_memory_states_b= self.get_states()
 
         concat_hidden = tf.concat([all_hidden_states_f, all_hidden_states_b],axis = 2)
-        return concat_hidden
+        return tf.reshape(concat_hidden, [-1,2* self.hidden_layer_size])
+      
+    def get_memory_states(self):
+        # Getting hidden and memory for the forward and backward pass
+        all_hidden_states_f, all_memory_states_f, all_hidden_states_b, all_memory_states_b= self.get_states()
+
+        concat_hidden = tf.concat([all_memory_states_f, all_memory_states_b],axis = 2)
+        return tf.reshape(concat_hidden, [-1,2*self.hidden_layer_size])
+      
     
-    # Function to get output from a hidden layer
-    def get_output(self, hidden_state):
-        """
-        This function takes hidden state and returns output
-        """
-        output = tf.nn.sigmoid(tf.matmul(hidden_state, self.Wo) + self.bo)
+    
 
-        return output
-
-    # Function for getting all output layers
-    def get_outputs(self):
-        """
-        Iterating through hidden states to get outputs for all timestamp
-        """
-        all_hidden_states = self.get_concat_hidden()
-
-        all_outputs = tf.map_fn(self.get_output, all_hidden_states)
-
-        return all_outputs
-
-    def loss(self):
-        with self.graph.as_default():
-            # Getting all outputs from rnn
-            outputs = self.get_outputs()
-            outputs = tf.reshape(outputs, [-1,400])
-            # Computing the Cross Entropy loss
-            cross_entropy = tf.losses.mean_squared_error(self._targets , outputs)
-            return cross_entropy
-
+    
 
 class Optimizer(object):
     
@@ -250,50 +351,5 @@ class Optimizer(object):
     
 
 
-def train(sess, model, optimizer, generator, graph,num_optimization_steps,start, logdir='./logdir'):
-    """ Train.
-    
-    Args:
-        sess: A Session.
-        model: A Model.
-        optimizer: An Optimizer.
-        generator: A generator that yields `(inputs, targets)` tuples, with
-            `inputs` and `targets` both having shape `[dynamic_duration, 1]`.
-        num_optimization_steps: An integer.
-        logdir: A string. The log directory.
-    """
-    model_path = "/tmp/model.ckpt"
-    #if os.path.exists(logdir):
-        #shutil.rmtree(logdir)
-        
-    with graph.as_default():
-        tf.summary.scalar('loss', model.loss())
 
-
-        summary_op = tf.summary.merge_all()
-        summary_writer = tf.summary.FileWriter(logdir=logdir, graph=sess.graph)
-
-        sess.run(tf.global_variables_initializer())
-        saver = tf.train.Saver()
-        foo = True
-        words = 0
-        for step in range(num_optimization_steps):
-            while foo:
-                words+=1
-                inputs, targets = generator.next_sent()
-                prec_x,prec_y = inputs, targets
-                if len(inputs)<1:
-                    x,y = prec_x,prec_y
-                    foo = False
-                inputs, targets = np.array(inputs), np.array([ targets[j][0] for j in range(len(inputs))])
-                loss_, summary, _ = sess.run(
-                    [model.loss(), summary_op, optimizer.optimize_op],
-                    {model._inputs: inputs, model._targets: targets})
-                summary_writer.add_summary(summary, global_step=step)
-                print('\rStep: %d   Sentences trained: %d. Loss Train: %.6f.' % (step +1, words, loss_), end='')
-                if words*(step+1) % 100 ==0:
-                    print("\n time exec : ",t.time()-start)
-                    
-                    # Save model weights to disk
-                    save_path = saver.save(sess, model_path)
-                    print("Model saved in file: %s" % save_path)
+      
